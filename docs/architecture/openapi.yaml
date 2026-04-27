@@ -1,0 +1,132 @@
+openapi: 3.1.0
+info:
+  title: GHAT Backend API
+  version: 1.0.0
+  description: |
+    Multi-user video chat + cooperative language game backend API.
+servers:
+  - url: https://api.example.com
+paths:
+  /api/v1/auth/signup:
+    post:
+      summary: Sign up user
+      responses:
+        '201':
+          description: User created with tokens
+  /api/v1/auth/login:
+    post:
+      summary: Login user
+      responses:
+        '200':
+          description: Login success with tokens
+  /api/v1/auth/refresh:
+    post:
+      summary: Refresh access token
+      responses:
+        '200':
+          description: Refreshed tokens
+  /api/v1/auth/guest:
+    post:
+      summary: Issue guest token
+      responses:
+        '200':
+          description: Guest token issued
+  /api/v1/rooms:
+    post:
+      summary: Create room
+      responses:
+        '201':
+          description: Room created
+  /api/v1/rooms/{roomId}/games:
+    post:
+      summary: Create game in room
+      parameters:
+        - in: path
+          name: roomId
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                targetLang:
+                  type: string
+                difficulty:
+                  type: string
+                  enum: [easy, medium, hard]
+                roundCount:
+                  type: integer
+      responses:
+        '201':
+          description: Game created
+  /api/v1/rooms/{roomId}/participants:
+    get:
+      summary: Get participant media/network states
+      responses:
+        '200':
+          description: Participant status snapshot
+  /api/v1/games/{gameId}/guess:
+    post:
+      summary: Submit guess
+      parameters:
+        - in: path
+          name: gameId
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                roundNo:
+                  type: integer
+                guess:
+                  type: string
+      responses:
+        '200':
+          description: Guess accepted
+  /api/v1/games/{gameId}/skip:
+    post:
+      summary: Skip current round
+      responses:
+        '200':
+          description: Round skipped
+  /api/v1/analytics/events:
+    post:
+      summary: Ingest analytics events
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                events:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      eventName:
+                        type: string
+                      eventTime:
+                        type: string
+                        format: date-time
+                      params:
+                        type: object
+                        additionalProperties: true
+      responses:
+        '202':
+          description: Accepted for async processing
+  /api/v1/analytics/mapping/verify:
+    get:
+      summary: Verify GA4-client and server event mappings
+      responses:
+        '200':
+          description: Mapping verification result
