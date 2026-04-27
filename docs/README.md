@@ -16,4 +16,6 @@
 - `product/analytics-events.md`: GA4 이벤트 정의 및 개인정보 가이드
 - `architecture/backend-api.md`: 백엔드 리소스/엔드포인트 설계
 - `architecture/openapi.yaml`: OpenAPI 3.1 API 계약 초안
+- `architecture/database-schema.md`: 사용자/방/게임/분석 DB 스키마 설계
+- `architecture/analytics-pipeline.md`: 큐/재시도/대시보드/매핑 검증 흐름
 - `development/backend-roadmap.md`: 백엔드 구현 단계 로드맵
