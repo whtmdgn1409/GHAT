@@ -12,7 +12,8 @@
 ## CI 파이프라인
 - GitHub Actions `ci.yml`
   - server job: migrate/seed/test
-  - web job: unit test/build
+  - web_unit job: unit test/build
+  - web_e2e job: Playwright E2E (분리 실행, non-blocking)
 
 ## 운영 모니터링
 - WebRTC 품질 지표(RTT, packet loss)를 participant 상태로 실시간 반영

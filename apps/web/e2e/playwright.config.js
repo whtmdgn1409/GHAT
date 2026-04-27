@@ -1,12 +1,13 @@
 import { defineConfig } from '@playwright/test';
 
 export default defineConfig({
-  testDir: './e2e',
+  testDir: '.',
+  testMatch: '*.spec.js',
   use: {
     baseURL: 'http://127.0.0.1:5173'
   },
   webServer: {
-    command: 'npm run dev -- --host 127.0.0.1 --port 5173',
+    command: 'npm --prefix .. run dev -- --host 127.0.0.1 --port 5173',
     url: 'http://127.0.0.1:5173',
     reuseExistingServer: true
   }

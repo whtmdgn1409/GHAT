@@ -17,7 +17,9 @@ React + Vite 기반 프론트엔드 앱입니다.
 
 ## 테스트
 - 컴포넌트 테스트: `npm run test`
-- E2E 테스트: `npm run test:e2e`
+- E2E 테스트:
+  1. `cd apps/web/e2e && npm install`
+  2. `cd .. && npm run test:e2e`
 
 ## 환경 변수
 - `VITE_API_BASE_URL` (기본값: `http://localhost:4000`)
