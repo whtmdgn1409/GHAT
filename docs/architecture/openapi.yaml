@@ -1,0 +1,96 @@
+openapi: 3.1.0
+info:
+  title: GHAT Backend API
+  version: 1.0.0
+  description: |
+    Multi-user video chat + cooperative language game backend API.
+servers:
+  - url: https://api.example.com
+paths:
+  /api/v1/auth/guest:
+    post:
+      summary: Issue guest token
+      responses:
+        '200':
+          description: Guest token issued
+  /api/v1/rooms:
+    post:
+      summary: Create room
+      responses:
+        '201':
+          description: Room created
+  /api/v1/rooms/{roomId}/games:
+    post:
+      summary: Create game in room
+      parameters:
+        - in: path
+          name: roomId
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                targetLang:
+                  type: string
+                difficulty:
+                  type: string
+                  enum: [easy, medium, hard]
+                roundCount:
+                  type: integer
+      responses:
+        '201':
+          description: Game created
+  /api/v1/games/{gameId}/guess:
+    post:
+      summary: Submit guess
+      parameters:
+        - in: path
+          name: gameId
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                roundNo:
+                  type: integer
+                guess:
+                  type: string
+      responses:
+        '200':
+          description: Guess accepted
+  /api/v1/analytics/events:
+    post:
+      summary: Ingest analytics events
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                events:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      eventName:
+                        type: string
+                      eventTime:
+                        type: string
+                        format: date-time
+                      params:
+                        type: object
+                        additionalProperties: true
+      responses:
+        '202':
+          description: Accepted for async processing
