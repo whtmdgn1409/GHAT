@@ -1,23 +1,29 @@
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import AuthCard from '../components/AuthCard';
-import { saveAuthUser } from '../lib/auth';
+import { login } from '../lib/api';
+import { saveAuthSession } from '../lib/auth';
 
 function LoginPage() {
   const navigate = useNavigate();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [isLoading, setLoading] = useState(false);
+  const [error, setError] = useState('');
 
-  const onSubmit = (event) => {
+  const onSubmit = async (event) => {
     event.preventDefault();
-
-    const user = {
-      id: `usr_${crypto.randomUUID()}`,
-      email,
-      displayName: email.split('@')[0] || 'guest'
-    };
-    saveAuthUser(user);
-    navigate('/video');
+    setLoading(true);
+    setError('');
+    try {
+      const result = await login({ email, password });
+      saveAuthSession(result);
+      navigate('/video');
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
@@ -52,7 +58,10 @@ function LoginPage() {
             required
           />
         </label>
-        <button type="submit">로그인</button>
+        {error && <p className="error-text">{error}</p>}
+        <button type="submit" disabled={isLoading}>
+          {isLoading ? '로그인 중...' : '로그인'}
+        </button>
       </form>
     </AuthCard>
   );

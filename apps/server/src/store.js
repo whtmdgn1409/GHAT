@@ -27,6 +27,8 @@ const WORD_PACKS = [
 export function createStore() {
   return {
     users: new Map(),
+    usersByEmail: new Map(),
+    sessions: new Map(),
     rooms: new Map(),
     games: new Map(),
     analytics: [],
@@ -34,11 +36,39 @@ export function createStore() {
   };
 }
 
-export function issueGuestUser(store) {
+export function createUser(store, { name, email, passwordHash, passwordSalt }) {
+  const normalized = String(email).trim().toLowerCase();
+  if (store.usersByEmail.has(normalized)) return { error: 'EMAIL_ALREADY_USED' };
+
   const userId = `usr_${randomUUID()}`;
-  const token = `gst_${randomUUID()}`;
-  store.users.set(userId, { userId, token, role: 'guest', createdAt: Date.now() });
-  return { userId, accessToken: token, tokenType: 'Bearer', expiresInSec: 3600 };
+  const user = {
+    userId,
+    name: name?.trim() || normalized.split('@')[0],
+    email: normalized,
+    passwordHash,
+    passwordSalt,
+    createdAt: Date.now()
+  };
+
+  store.users.set(userId, user);
+  store.usersByEmail.set(normalized, userId);
+  return { user };
+}
+
+export function getUserByEmail(store, email) {
+  const userId = store.usersByEmail.get(String(email).trim().toLowerCase());
+  if (!userId) return null;
+  return store.users.get(userId) || null;
+}
+
+export function saveRefreshToken(store, refreshToken, userId) {
+  store.sessions.set(refreshToken, { userId, issuedAt: Date.now() });
+}
+
+export function getUserByRefreshToken(store, refreshToken) {
+  const session = store.sessions.get(refreshToken);
+  if (!session) return null;
+  return store.users.get(session.userId) || null;
 }
 
 export function createRoom(store, { hostUserId, name = 'Untitled Room', maxParticipants = 6 }) {
@@ -88,4 +118,14 @@ export function createGame(store, roomId, payload) {
 
   store.games.set(gameId, game);
   return { game };
+}
+
+export function sanitizeUser(user) {
+  if (!user) return null;
+  return {
+    userId: user.userId,
+    name: user.name,
+    email: user.email,
+    createdAt: user.createdAt
+  };
 }

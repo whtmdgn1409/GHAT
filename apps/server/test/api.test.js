@@ -13,43 +13,81 @@ function startServer() {
   });
 }
 
-test('guest -> room -> game lifecycle works', async (t) => {
+async function signup(baseUrl, email = 'tester@example.com') {
+  const res = await fetch(`${baseUrl}/api/v1/auth/signup`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ name: 'Tester', email, password: 'password1234' })
+  });
+  assert.equal(res.status, 201);
+  const body = await res.json();
+  return body.data;
+}
+
+test('signup/login/refresh lifecycle works', async (t) => {
   const { server, baseUrl } = await startServer();
   t.after(() => server.close());
 
-  const guestRes = await fetch(`${baseUrl}/api/v1/auth/guest`, { method: 'POST' });
-  assert.equal(guestRes.status, 200);
-  const guestBody = await guestRes.json();
-  const userId = guestBody.data.userId;
+  const created = await signup(baseUrl, 'member@example.com');
+  assert.ok(created.accessToken);
+
+  const loginRes = await fetch(`${baseUrl}/api/v1/auth/login`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ email: 'member@example.com', password: 'password1234' })
+  });
+  assert.equal(loginRes.status, 200);
+  const loginBody = await loginRes.json();
+  assert.ok(loginBody.data.accessToken);
+
+  const refreshRes = await fetch(`${baseUrl}/api/v1/auth/refresh`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ refreshToken: loginBody.data.refreshToken })
+  });
+  assert.equal(refreshRes.status, 200);
+  const refreshBody = await refreshRes.json();
+  assert.ok(refreshBody.data.accessToken);
+});
+
+test('authorized room/game lifecycle works', async (t) => {
+  const { server, baseUrl } = await startServer();
+  t.after(() => server.close());
+
+  const auth = await signup(baseUrl, 'roomer@example.com');
+  const headers = {
+    'content-type': 'application/json',
+    authorization: `Bearer ${auth.accessToken}`
+  };
 
   const roomRes = await fetch(`${baseUrl}/api/v1/rooms`, {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ hostUserId: userId, name: 'Study Room', maxParticipants: 4 })
+    headers,
+    body: JSON.stringify({ name: 'Study Room', maxParticipants: 4 })
   });
   assert.equal(roomRes.status, 201);
   const roomBody = await roomRes.json();
   const roomId = roomBody.data.roomId;
 
+  const joinRes = await fetch(`${baseUrl}/api/v1/rooms/${roomId}/join`, { method: 'POST', headers });
+  assert.equal(joinRes.status, 200);
+
   const gameRes = await fetch(`${baseUrl}/api/v1/rooms/${roomId}/games`, {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
+    headers,
     body: JSON.stringify({ targetLang: 'en', difficulty: 'easy', roundCount: 1 })
   });
   assert.equal(gameRes.status, 201);
   const gameBody = await gameRes.json();
   const gameId = gameBody.data.gameId;
 
-  const startRes = await fetch(`${baseUrl}/api/v1/games/${gameId}/start`, { method: 'POST' });
+  const startRes = await fetch(`${baseUrl}/api/v1/games/${gameId}/start`, { method: 'POST', headers });
   assert.equal(startRes.status, 200);
-
-  const hintRes = await fetch(`${baseUrl}/api/v1/games/${gameId}/hint`, { method: 'POST' });
-  assert.equal(hintRes.status, 200);
 
   const guessRes = await fetch(`${baseUrl}/api/v1/games/${gameId}/guess`, {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ userId, guess: 'apple' })
+    headers,
+    body: JSON.stringify({ guess: 'apple' })
   });
   assert.equal(guessRes.status, 200);
   const guessBody = await guessRes.json();
@@ -60,9 +98,13 @@ test('analytics validation blocks pii', async (t) => {
   const { server, baseUrl } = await startServer();
   t.after(() => server.close());
 
+  const auth = await signup(baseUrl, 'analytics@example.com');
   const res = await fetch(`${baseUrl}/api/v1/analytics/events`, {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
+    headers: {
+      'content-type': 'application/json',
+      authorization: `Bearer ${auth.accessToken}`
+    },
     body: JSON.stringify({
       events: [
         {

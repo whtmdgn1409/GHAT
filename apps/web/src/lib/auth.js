@@ -1,10 +1,10 @@
-const AUTH_KEY = 'ghat_auth_user';
+const AUTH_KEY = 'ghat_auth_session';
 
-export function saveAuthUser(user) {
-  localStorage.setItem(AUTH_KEY, JSON.stringify(user));
+export function saveAuthSession(session) {
+  localStorage.setItem(AUTH_KEY, JSON.stringify(session));
 }
 
-export function loadAuthUser() {
+export function loadAuthSession() {
   const raw = localStorage.getItem(AUTH_KEY);
   if (!raw) return null;
 
@@ -15,6 +15,10 @@ export function loadAuthUser() {
   }
 }
 
-export function clearAuthUser() {
+export function clearAuthSession() {
   localStorage.removeItem(AUTH_KEY);
+}
+
+export function getAccessToken() {
+  return loadAuthSession()?.accessToken ?? null;
 }

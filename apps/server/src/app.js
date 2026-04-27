@@ -1,14 +1,24 @@
 import { randomUUID } from 'node:crypto';
-import {
-  createStore,
-  issueGuestUser,
-  createRoom,
-  createGame
-} from './store.js';
 import { validateAnalyticsEvents } from './analytics.js';
+import { getBearerToken, hashPassword, issueAuthTokens, verifyJWT, verifyPassword } from './auth.js';
+import {
+  createGame,
+  createRoom,
+  createStore,
+  createUser,
+  getUserByEmail,
+  getUserByRefreshToken,
+  sanitizeUser,
+  saveRefreshToken
+} from './store.js';
 
 function json(res, status, payload) {
-  res.writeHead(status, { 'content-type': 'application/json; charset=utf-8' });
+  res.writeHead(status, {
+    'content-type': 'application/json; charset=utf-8',
+    'access-control-allow-origin': '*',
+    'access-control-allow-headers': 'content-type, authorization',
+    'access-control-allow-methods': 'GET,POST,OPTIONS'
+  });
   res.end(JSON.stringify(payload));
 }
 
@@ -56,8 +66,22 @@ function matchPath(pathname, pattern) {
   return params;
 }
 
-export function createApp(customStore) {
-  const store = customStore ?? createStore();
+function authUserFromRequest(store, req) {
+  const token = getBearerToken(req);
+  if (!token) return null;
+  const payload = verifyJWT(token);
+  if (!payload || payload.scope !== 'access' || !payload.sub) return null;
+  return store.users.get(payload.sub) || null;
+}
+
+function emitRoomEvent(realtimeHub, roomId, type, payload) {
+  if (!realtimeHub || !roomId) return;
+  realtimeHub.broadcastRoom(roomId, { type, roomId, payload, emittedAt: new Date().toISOString() });
+}
+
+export function createApp(options = {}) {
+  const store = options.store ?? createStore();
+  const realtimeHub = options.realtimeHub ?? null;
 
   return async function handler(req, res) {
     const requestId = `req_${randomUUID()}`;
@@ -65,18 +89,100 @@ export function createApp(customStore) {
     const url = new URL(req.url, 'http://localhost');
     const pathname = url.pathname;
 
+    if (method === 'OPTIONS') {
+      res.writeHead(204, {
+        'access-control-allow-origin': '*',
+        'access-control-allow-headers': 'content-type, authorization',
+        'access-control-allow-methods': 'GET,POST,OPTIONS'
+      });
+      res.end();
+      return;
+    }
+
     if (method === 'GET' && pathname === '/health') {
       return ok(res, requestId, { status: 'ok' });
     }
 
-    if (method === 'POST' && pathname === '/api/v1/auth/guest') {
-      return ok(res, requestId, issueGuestUser(store));
+    if (method === 'POST' && pathname === '/api/v1/auth/signup') {
+      const body = await readBody(req);
+      if (!body) return fail(res, requestId, 'INVALID_JSON', 'Invalid JSON body', 400);
+      if (!body.email || !body.password) {
+        return fail(res, requestId, 'INVALID_REQUEST', 'email and password are required', 400);
+      }
+      if (String(body.password).length < 8) {
+        return fail(res, requestId, 'INVALID_REQUEST', 'password must be at least 8 chars', 400);
+      }
+
+      const { salt, hash } = hashPassword(body.password);
+      const created = createUser(store, {
+        name: body.name,
+        email: body.email,
+        passwordHash: hash,
+        passwordSalt: salt
+      });
+      if (created.error === 'EMAIL_ALREADY_USED') {
+        return fail(res, requestId, 'EMAIL_ALREADY_USED', 'email already exists', 409);
+      }
+
+      const tokens = issueAuthTokens(created.user.userId);
+      saveRefreshToken(store, tokens.refreshToken, created.user.userId);
+      return ok(
+        res,
+        requestId,
+        {
+          user: sanitizeUser(created.user),
+          ...tokens
+        },
+        201
+      );
+    }
+
+    if (method === 'POST' && pathname === '/api/v1/auth/login') {
+      const body = await readBody(req);
+      if (!body) return fail(res, requestId, 'INVALID_JSON', 'Invalid JSON body', 400);
+      if (!body.email || !body.password) {
+        return fail(res, requestId, 'INVALID_REQUEST', 'email and password are required', 400);
+      }
+
+      const user = getUserByEmail(store, body.email);
+      if (!user || !verifyPassword(body.password, user.passwordSalt, user.passwordHash)) {
+        return fail(res, requestId, 'AUTH_INVALID', 'invalid email or password', 401);
+      }
+
+      const tokens = issueAuthTokens(user.userId);
+      saveRefreshToken(store, tokens.refreshToken, user.userId);
+      return ok(res, requestId, { user: sanitizeUser(user), ...tokens });
+    }
+
+    if (method === 'POST' && pathname === '/api/v1/auth/refresh') {
+      const body = await readBody(req);
+      if (!body?.refreshToken) {
+        return fail(res, requestId, 'INVALID_REQUEST', 'refreshToken is required', 400);
+      }
+      const payload = verifyJWT(body.refreshToken);
+      const user = getUserByRefreshToken(store, body.refreshToken);
+      if (!payload || payload.scope !== 'refresh' || !user) {
+        return fail(res, requestId, 'AUTH_INVALID', 'invalid refresh token', 401);
+      }
+
+      const tokens = issueAuthTokens(user.userId);
+      saveRefreshToken(store, tokens.refreshToken, user.userId);
+      return ok(res, requestId, { user: sanitizeUser(user), ...tokens });
+    }
+
+    const authUser = authUserFromRequest(store, req);
+
+    if (pathname.startsWith('/api/v1/rooms') || pathname.startsWith('/api/v1/games') || pathname.startsWith('/api/v1/analytics')) {
+      if (!authUser) {
+        return fail(res, requestId, 'AUTH_REQUIRED', 'valid bearer token is required', 401);
+      }
     }
 
     if (method === 'POST' && pathname === '/api/v1/rooms') {
       const body = await readBody(req);
       if (!body) return fail(res, requestId, 'INVALID_JSON', 'Invalid JSON body', 400);
-      const room = createRoom(store, body);
+      const room = createRoom(store, { ...body, hostUserId: authUser.userId });
+      emitRoomEvent(realtimeHub, room.roomId, 'room.created', { room });
       return ok(res, requestId, room, 201);
     }
 
@@ -91,12 +197,11 @@ export function createApp(customStore) {
     if (method === 'POST' && joinParams) {
       const room = store.rooms.get(joinParams.roomId);
       if (!room) return fail(res, requestId, 'ROOM_NOT_FOUND', 'Room not found', 404);
-      const body = await readBody(req);
-      if (!body?.userId) return fail(res, requestId, 'INVALID_REQUEST', 'userId is required', 400);
       if (room.participants.length >= room.maxParticipants) {
         return fail(res, requestId, 'ROOM_FULL', 'Room is full', 409);
       }
-      if (!room.participants.includes(body.userId)) room.participants.push(body.userId);
+      if (!room.participants.includes(authUser.userId)) room.participants.push(authUser.userId);
+      emitRoomEvent(realtimeHub, room.roomId, 'room.joined', { userId: authUser.userId, participants: room.participants });
       return ok(res, requestId, room);
     }
 
@@ -104,10 +209,17 @@ export function createApp(customStore) {
     if (method === 'POST' && leaveParams) {
       const room = store.rooms.get(leaveParams.roomId);
       if (!room) return fail(res, requestId, 'ROOM_NOT_FOUND', 'Room not found', 404);
-      const body = await readBody(req);
-      if (!body?.userId) return fail(res, requestId, 'INVALID_REQUEST', 'userId is required', 400);
-      room.participants = room.participants.filter((userId) => userId !== body.userId);
+      room.participants = room.participants.filter((userId) => userId !== authUser.userId);
+      emitRoomEvent(realtimeHub, room.roomId, 'room.left', { userId: authUser.userId, participants: room.participants });
       return ok(res, requestId, room);
+    }
+
+    const roomStateParams = matchPath(pathname, '/api/v1/rooms/:roomId/state');
+    if (method === 'GET' && roomStateParams) {
+      const room = store.rooms.get(roomStateParams.roomId);
+      if (!room) return fail(res, requestId, 'ROOM_NOT_FOUND', 'Room not found', 404);
+      const activeGames = [...store.games.values()].filter((game) => game.roomId === room.roomId);
+      return ok(res, requestId, { room, games: activeGames });
     }
 
     const gameCreateParams = matchPath(pathname, '/api/v1/rooms/:roomId/games');
@@ -119,6 +231,7 @@ export function createApp(customStore) {
       if (result.error === 'WORD_PACK_NOT_AVAILABLE') {
         return fail(res, requestId, 'WORD_PACK_NOT_AVAILABLE', 'No matching word pack', 404);
       }
+      emitRoomEvent(realtimeHub, result.game.roomId, 'game.created', { game: result.game });
       return ok(res, requestId, result.game, 201);
     }
 
@@ -134,6 +247,7 @@ export function createApp(customStore) {
       const game = store.games.get(gameStartParams.gameId);
       if (!game) return fail(res, requestId, 'GAME_NOT_ACTIVE', 'Game not found', 404);
       game.status = 'started';
+      emitRoomEvent(realtimeHub, game.roomId, 'game.started', { gameId: game.gameId });
       return ok(res, requestId, game);
     }
 
@@ -142,16 +256,14 @@ export function createApp(customStore) {
       const game = store.games.get(guessParams.gameId);
       if (!game || game.status === 'finished') return fail(res, requestId, 'GAME_NOT_ACTIVE', 'Game not active', 404);
       const body = await readBody(req);
-      if (!body?.guess || !body?.userId) {
-        return fail(res, requestId, 'INVALID_GUESS', 'guess and userId are required', 400);
-      }
+      if (!body?.guess) return fail(res, requestId, 'INVALID_GUESS', 'guess is required', 400);
 
       const round = game.rounds.find((r) => r.roundNo === game.currentRound);
       if (!round) return fail(res, requestId, 'GAME_NOT_ACTIVE', 'No current round', 409);
 
       const normalized = String(body.guess).trim().toLowerCase();
       const correct = normalized === round.answer.toLowerCase();
-      round.attempts.push({ userId: body.userId, guess: normalized, correct, at: Date.now() });
+      round.attempts.push({ userId: authUser.userId, guess: normalized, correct, at: Date.now() });
 
       if (correct && round.status !== 'correct') {
         round.status = 'correct';
@@ -160,14 +272,16 @@ export function createApp(customStore) {
         if (game.currentRound > game.rounds.length) game.status = 'finished';
       }
 
-      return ok(res, requestId, {
+      const payload = {
         gameId: game.gameId,
         roundNo: round.roundNo,
         correct,
         nextRound: game.currentRound,
         score: game.score,
         status: game.status
-      });
+      };
+      emitRoomEvent(realtimeHub, game.roomId, 'round.updated', payload);
+      return ok(res, requestId, payload);
     }
 
     const hintParams = matchPath(pathname, '/api/v1/games/:gameId/hint');
@@ -177,7 +291,9 @@ export function createApp(customStore) {
       const round = game.rounds.find((r) => r.roundNo === game.currentRound);
       if (!round) return fail(res, requestId, 'GAME_NOT_ACTIVE', 'No current round', 409);
       const hint = `${round.answer[0]}${'*'.repeat(Math.max(round.answer.length - 2, 0))}${round.answer.slice(-1)}`;
-      return ok(res, requestId, { roundNo: round.roundNo, hint });
+      const payload = { roundNo: round.roundNo, hint };
+      emitRoomEvent(realtimeHub, game.roomId, 'hint.revealed', payload);
+      return ok(res, requestId, payload);
     }
 
     const finishParams = matchPath(pathname, '/api/v1/games/:gameId/finish');
@@ -185,6 +301,7 @@ export function createApp(customStore) {
       const game = store.games.get(finishParams.gameId);
       if (!game) return fail(res, requestId, 'GAME_NOT_ACTIVE', 'Game not found', 404);
       game.status = 'finished';
+      emitRoomEvent(realtimeHub, game.roomId, 'game.finished', { gameId: game.gameId, score: game.score });
       return ok(res, requestId, game);
     }
 
@@ -213,7 +330,7 @@ export function createApp(customStore) {
       if (!verdict.ok) {
         return fail(res, requestId, verdict.reason, 'Analytics validation failed', 400, verdict.details);
       }
-      const stored = body.events.map((event) => ({ ...event, requestId, receivedAt: Date.now() }));
+      const stored = body.events.map((event) => ({ ...event, requestId, receivedAt: Date.now(), userId: authUser.userId }));
       store.analytics.push(...stored);
       return ok(res, requestId, { accepted: stored.length }, 202);
     }
@@ -222,9 +339,7 @@ export function createApp(customStore) {
     if (method === 'GET' && summaryParams) {
       const roomEvents = store.analytics.filter((event) => event.params?.room_id === summaryParams.roomId);
       const byEvent = {};
-      for (const event of roomEvents) {
-        byEvent[event.eventName] = (byEvent[event.eventName] || 0) + 1;
-      }
+      for (const event of roomEvents) byEvent[event.eventName] = (byEvent[event.eventName] || 0) + 1;
       return ok(res, requestId, {
         roomId: summaryParams.roomId,
         totalEvents: roomEvents.length,

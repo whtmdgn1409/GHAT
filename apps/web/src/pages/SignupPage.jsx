@@ -1,24 +1,31 @@
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import AuthCard from '../components/AuthCard';
-import { saveAuthUser } from '../lib/auth';
+import { signup } from '../lib/api';
+import { saveAuthSession } from '../lib/auth';
 
 function SignupPage() {
   const navigate = useNavigate();
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [isLoading, setLoading] = useState(false);
+  const [error, setError] = useState('');
 
-  const onSubmit = (event) => {
+  const onSubmit = async (event) => {
     event.preventDefault();
+    setLoading(true);
+    setError('');
 
-    const user = {
-      id: `usr_${crypto.randomUUID()}`,
-      email,
-      displayName: name
-    };
-    saveAuthUser(user);
-    navigate('/video');
+    try {
+      const result = await signup({ name, email, password });
+      saveAuthSession(result);
+      navigate('/video');
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
@@ -63,7 +70,10 @@ function SignupPage() {
             required
           />
         </label>
-        <button type="submit">회원가입</button>
+        {error && <p className="error-text">{error}</p>}
+        <button type="submit" disabled={isLoading}>
+          {isLoading ? '가입 중...' : '회원가입'}
+        </button>
       </form>
     </AuthCard>
   );
