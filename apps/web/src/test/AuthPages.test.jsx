@@ -11,7 +11,7 @@ describe('Auth pages', () => {
         <LoginPage />
       </BrowserRouter>
     );
-    expect(screen.getByText('로그인')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { level: 1, name: '로그인' })).toBeInTheDocument();
     expect(screen.getByPlaceholderText('you@example.com')).toBeInTheDocument();
   });
 
@@ -21,7 +21,7 @@ describe('Auth pages', () => {
         <SignupPage />
       </BrowserRouter>
     );
-    expect(screen.getByText('회원가입')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { level: 1, name: '회원가입' })).toBeInTheDocument();
     expect(screen.getByPlaceholderText('홍길동')).toBeInTheDocument();
   });
 });
